@@ -29,7 +29,7 @@ Control [Aqua Voice](https://withaqua.com) (or any push-to-talk app) with facial
 ## Setup / セットアップ
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/aqua-face.git
+git clone https://github.com/tacosl4ver/aqua-face.git
 cd aqua-face
 bash install.sh
 ```
