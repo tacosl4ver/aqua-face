@@ -91,7 +91,7 @@ def get_blendshape(blendshapes, name: str) -> float:
     return 0.0
 
 
-def run(headless: bool):
+def run(headless: bool, stop_event=None):
     if not MODEL_PATH.exists():
         sys.exit(f"モデルファイルが見つかりません: {MODEL_PATH}")
 
@@ -229,7 +229,7 @@ def run(headless: bool):
         cv2.setMouseCallback("face_trigger", mouse_cb)
 
     try:
-        while True:
+        while not (stop_event and stop_event.is_set()):
             ok, frame = cap.read()
             if not ok:
                 continue
