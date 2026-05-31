@@ -50,13 +50,37 @@ python3 face_trigger.py --headless
 
 ## Tuning / 閾値の調整
 
-Open `face_trigger.py` and edit the parameters at the top:
+In preview mode, drag the sliders at the bottom of the window to adjust thresholds in real time. Settings are saved to `settings.json` on exit and restored on the next launch.
 
-`face_trigger.py` の上部にある以下のパラメータで動作を調整できます：
+プレビューモードでは、ウィンドウ下部のスライダーをドラッグしてリアルタイムに閾値を変更できます。終了時に `settings.json` へ自動保存され、次回起動時に復元されます。
 
-```python
-JAW_OPEN_THRESHOLD  = 0.22   # Mouth open sensitivity / 口の開き感度
-BLINK_DELTA         = 0.28   # Slow blink sensitivity / スローブリンク感度
-BLINK_HOLD_SECS     = 0.30   # Slow blink duration (sec) / スローブリンク判定秒数
-SMILE_THRESHOLD     = 0.12   # Smile sensitivity / スマイル感度
-```
+| Parameter | Default | Description |
+|---|---|---|
+| JAW | 0.22 | Mouth open threshold / 口の開き閾値 |
+| BLINK_DELTA | 0.28 | Blink sensitivity above baseline / まばたき感度 |
+| BLINK_HOLD | 0.30 s | Slow blink duration / スローブリンク判定秒数 |
+| SMILE | 0.12 | Smile threshold (range 0–0.25) / スマイル閾値 |
+
+---
+
+## Dependencies & Licenses / 依存ライブラリとライセンス
+
+| Library | License | Used for |
+|---|---|---|
+| [MediaPipe](https://github.com/google-ai-edge/mediapipe) | Apache 2.0 | Face landmark detection / 顔ランドマーク検出 |
+| [OpenCV](https://github.com/opencv/opencv) | Apache 2.0 | Camera capture & preview / カメラ映像処理 |
+| [pynput](https://github.com/moses-palmer/pynput) | LGPL v3 | Keyboard event (Enter) / キーボード操作 |
+| [PyObjC Quartz](https://github.com/ronaldoussoren/pyobjc) | MIT | Fn key via CGEvent / Fnキー送信 |
+| [psutil](https://github.com/giampaolo/psutil) | BSD 3-Clause | CPU metrics display / CPU情報表示 |
+| [NumPy](https://github.com/numpy/numpy) | BSD 3-Clause | Frame compositing / フレーム合成 |
+
+The face landmark model (`face_landmarker.task`) is provided by MediaPipe under Apache 2.0.
+
+顔ランドマークモデル（`face_landmarker.task`）は MediaPipe が Apache 2.0 ライセンスで提供しています。
+
+### Note on pynput (LGPL v3)
+
+This project uses [pynput](https://github.com/moses-palmer/pynput), which is licensed under the **GNU Lesser General Public License v3 (LGPL v3)**.  
+As required by LGPL v3, the pynput source code is available at: https://github.com/moses-palmer/pynput
+
+pynput を LGPL v3 のもとで使用しています。LGPL v3 の要件に従い、pynput のソースコードは上記リンクから入手できます。

@@ -11,12 +11,14 @@ Usage:
 """
 
 import argparse
-import os
+import json
 import sys
 import time
 from enum import Enum, auto
 from pathlib import Path
 
+import numpy as np
+import psutil
 import Quartz
 import cv2
 import mediapipe as mp
@@ -25,9 +27,10 @@ from mediapipe.tasks.python import vision
 from pynput.keyboard import Controller, Key
 
 # ── モデルパス ─────────────────────────────────────────────────────────────────
-MODEL_PATH = Path(__file__).parent / "face_landmarker.task"
+MODEL_PATH    = Path(__file__).parent / "face_landmarker.task"
+SETTINGS_PATH = Path(__file__).parent / "settings.json"
 
-# ── 調整パラメータ ─────────────────────────────────────────────────────────────
+# ── 調整パラメータ（初期値）─────────────────────────────────────────────────────
 JAW_OPEN_THRESHOLD   = 0.22   # 口の開き（0〜1）：これ以上で録音開始
 BLINK_DELTA          = 0.28   # ベースラインからこれ以上上がったら「目閉じ」判定
 BLINK_HOLD_SECS      = 0.30   # スローブリンクと判定するまでの秒数
@@ -69,7 +72,7 @@ class State(Enum):
 
 STATE_COLOR = {
     State.IDLE:     (80,  80,  80),
-    State.RECORD:   (200, 60,   0),
+    State.RECORD:   (0,   0, 220),
     State.COOLDOWN: (200, 160,  0),
     State.READY:    (0,  180,  60),
 }
@@ -98,11 +101,11 @@ def run(headless: bool):
     t_cooldown_start = 0.0
     t_blink_start    = None
     t_smile_start    = None
-    smile_must_reset = False  # Enter送信後、一度スマイルが消えるまで次を無効にする
-    t_jaw_closed_at  = 0.0    # 顎が閉じた時刻（直後のblink誤検知を防ぐ）
-    JAW_BLINK_GUARD  = 0.25   # 顎が閉じてからblink検知を再開するまでの秒数
+    smile_must_reset = False
+    t_jaw_closed_at  = 0.0
+    JAW_BLINK_GUARD  = 0.25
     jaw_was_open     = False
-    ear_baseline     = 0.30   # 起動時の初期値、すぐに実測値に収束する
+    ear_baseline     = 0.30
 
     base_options = mp_python.BaseOptions(model_asset_path=str(MODEL_PATH))
     options = vision.FaceLandmarkerOptions(
@@ -123,7 +126,108 @@ def run(headless: bool):
 
     print("face_trigger 起動。終了: q キー（プレビューあり）または Ctrl+C")
 
-    frame_count = 0
+    psutil.cpu_percent(interval=None)  # 初回呼び出しで計測基準を設定
+
+    frame_count   = 0
+    proc_count    = 0
+    fps_val       = 0.0
+    fps_last_t    = time.time()
+    fps_last_proc = 0
+    cpu_str       = "CPU: --"
+
+    # 可変閾値: [jaw, blink_delta, blink_hold, smile]（保存値があれば復元）
+    _defaults = [JAW_OPEN_THRESHOLD, BLINK_DELTA, BLINK_HOLD_SECS, SMILE_THRESHOLD]
+    try:
+        _saved = json.loads(SETTINGS_PATH.read_text())
+        thresholds = [float(_saved.get(k, d)) for k, d in
+                      zip(["jaw", "blink_delta", "blink_hold", "smile"], _defaults)]
+        print(f"設定を読み込みました: {SETTINGS_PATH}")
+    except Exception:
+        thresholds = _defaults[:]
+
+    # スキップフレームでもパネルを再描画するためにキャッシュ
+    disp_state    = State.IDLE
+    disp_jaw      = 0.0
+    disp_blink    = 0.0
+    disp_smile    = 0.0
+    disp_ear_bl   = ear_baseline
+
+    # ── コントロールパネル定数 ──────────────────────────────────────────────────
+    CTRL_H   = 140   # パネル高さ
+    LBL_W    = 90    # ラベル幅
+    BAR_W    = 180   # バー幅
+    BAR_X    = LBL_W
+    ROW_H    = 24    # スライダー1行の高さ
+    ROWS_TOP = 38    # パネル内でスライダーが始まるY
+    SL_NAMES = ["JAW", "BLINK_DELTA", "BLINK_HOLD", "SMILE"]
+    SL_MAX   = [1.0,   1.0,          1.0,           0.25]   # SMILE は 0.25 を上限に
+    _drag    = [-1]  # ドラッグ中のスライダーindex（-1=なし）
+    cam_h    = [CAMERA_HEIGHT]  # 実フレーム高さ（初回フレームで更新）
+
+    def _draw_ctrl(fw):
+        panel = np.full((CTRL_H, fw, 3), 22, dtype=np.uint8)
+
+        # CPU/FPS 行
+        cv2.putText(panel, cpu_str,
+                    (6, 14), cv2.FONT_HERSHEY_SIMPLEX, 0.44, (100, 200, 255), 1)
+
+        # NOW 行（現在値 + ブリンク閾値）
+        blink_thr = disp_ear_bl + thresholds[1]
+        live = (f"NOW  JAW:{disp_jaw:.2f}  "
+                f"BLINK:{disp_blink:.2f}(thr:{blink_thr:.2f})  "
+                f"SMILE:{disp_smile:.2f}")
+        cv2.putText(panel, live,
+                    (6, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.40, (0, 210, 0), 1)
+
+        # 区切り線
+        cv2.line(panel, (0, 36), (fw, 36), (70, 70, 70), 1)
+
+        # スライダー行
+        for i, (name, val, sl_max) in enumerate(zip(SL_NAMES, thresholds, SL_MAX)):
+            ry = ROWS_TOP + i * ROW_H
+            by = ry + (ROW_H - 8) // 2   # バートップY（行内で垂直中央）
+
+            # ラベル
+            cv2.putText(panel, name,
+                        (4, ry + 16), cv2.FONT_HERSHEY_SIMPLEX, 0.40, (180, 180, 180), 1)
+
+            # バー背景
+            cv2.rectangle(panel, (BAR_X, by), (BAR_X + BAR_W, by + 8), (55, 55, 55), -1)
+
+            # バー塗り（val / sl_max で正規化）
+            fill = max(0, min(BAR_W, int(val / sl_max * BAR_W)))
+            cv2.rectangle(panel, (BAR_X, by), (BAR_X + fill, by + 8), (30, 130, 200), -1)
+
+            # ハンドル（ドラッグ中は黄色）
+            hx   = BAR_X + fill
+            hcol = (60, 220, 255) if _drag[0] == i else (210, 210, 210)
+            cv2.circle(panel, (hx, by + 4), 8, hcol, -1)
+
+            cv2.putText(panel, f"{val:.2f}",
+                        (BAR_X + BAR_W + 5, ry + 16),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.40, (220, 200, 60), 1)
+
+        return panel
+
+    def mouse_cb(event, x, y, flags, param):
+        if event == cv2.EVENT_LBUTTONUP:
+            _drag[0] = -1
+            return
+        py = y - cam_h[0]   # コントロールパネル内Y
+        if event == cv2.EVENT_LBUTTONDOWN:
+            if py >= ROWS_TOP:
+                i = (py - ROWS_TOP) // ROW_H
+                if 0 <= i < 4:
+                    _drag[0] = i
+        if _drag[0] >= 0 and (flags & cv2.EVENT_FLAG_LBUTTON):
+            sl_max = SL_MAX[_drag[0]]
+            val = max(0.01, min(sl_max, (x - BAR_X) / BAR_W * sl_max))
+            thresholds[_drag[0]] = round(val, 3)
+
+    if not headless:
+        cv2.namedWindow("face_trigger")
+        cv2.setMouseCallback("face_trigger", mouse_cb)
+
     try:
         while True:
             ok, frame = cap.read()
@@ -131,14 +235,44 @@ def run(headless: bool):
                 continue
 
             frame_count += 1
+            jaw_thresh   = thresholds[0]
+            blink_delta  = thresholds[1]
+            blink_hold   = thresholds[2]
+            smile_thresh = thresholds[3]
+
             if frame_count % FRAME_SKIP != 0:
                 if not headless:
-                    cv2.imshow("face_trigger", frame)
+                    # スキップフレーム: 上部バーのみ再描画してちらつき防止
+                    h, w = frame.shape[:2]
+                    cam_h[0] = h
+                    color = STATE_COLOR[disp_state]
+                    cv2.rectangle(frame, (0, 0), (w, 50), color, -1)
+                    cv2.putText(frame, STATE_LABEL[disp_state],
+                                (10, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (255, 255, 255), 2)
+                    composite = np.vstack([frame, _draw_ctrl(w)])
+                    cv2.imshow("face_trigger", composite)
                     if cv2.waitKey(1) & 0xFF == ord('q'):
                         break
                 continue
 
+            # ── CPU / FPS 更新（15処理フレームごと）──────────────────────────
+            proc_count += 1
+            if proc_count % 15 == 0:
+                now_t   = time.time()
+                elapsed = now_t - fps_last_t
+                if elapsed > 0:
+                    fps_val = (proc_count - fps_last_proc) / elapsed
+                fps_last_t    = now_t
+                fps_last_proc = proc_count
+                cpu_pct = psutil.cpu_percent(interval=None)
+                freq    = psutil.cpu_freq()
+                if freq:
+                    cpu_str = f"CPU:{cpu_pct:.0f}%  {freq.current/1000:.2f}GHz  FPS:{fps_val:.0f}"
+                else:
+                    cpu_str = f"CPU:{cpu_pct:.0f}%  FPS:{fps_val:.0f}"
+
             h, w = frame.shape[:2]
+            cam_h[0] = h
             mp_image = mp.Image(
                 image_format=mp.ImageFormat.SRGB,
                 data=cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -156,12 +290,12 @@ def run(headless: bool):
                          get_blendshape(bs, "mouthSmileRight")) / 2
 
                 # 目が開いている時だけベースラインを更新（blink低い=目が開いている）
-                if blink < ear_baseline + BLINK_DELTA * 0.5:
+                if blink < ear_baseline + blink_delta * 0.5:
                     ear_baseline = (1 - EAR_BASELINE_ALPHA) * ear_baseline + EAR_BASELINE_ALPHA * blink
-                    ear_baseline = min(ear_baseline, 0.35)  # 上限を設けてドリフト防止
+                    ear_baseline = min(ear_baseline, 0.35)
 
                 # 顎が開→閉に変わった瞬間を記録（直後のblink誤検知を防ぐ）
-                if jaw > JAW_OPEN_THRESHOLD:
+                if jaw > jaw_thresh:
                     jaw_was_open = True
                 elif jaw_was_open:
                     t_jaw_closed_at = now
@@ -169,21 +303,19 @@ def run(headless: bool):
                     t_blink_start = None
 
                 blink_allowed = (now - t_jaw_closed_at) > JAW_BLINK_GUARD
-                eye_closed = blink_allowed and (blink > ear_baseline + BLINK_DELTA)
+                eye_closed = blink_allowed and (blink > ear_baseline + blink_delta)
 
                 # ── 状態遷移 ───────────────────────────────────────────────
                 if state in (State.IDLE, State.READY):
 
-                    # 口を開ける → 録音開始
-                    if jaw > JAW_OPEN_THRESHOLD:
+                    if jaw > jaw_thresh:
                         fn_press()
                         fn_held = True
                         state = State.RECORD
                         t_blink_start = None
                         t_smile_start = None
 
-                    # スマイル → Enter（IDLE・READY両方）
-                    elif smile > SMILE_THRESHOLD and not smile_must_reset:
+                    elif smile > smile_thresh and not smile_must_reset:
                         if t_smile_start is None:
                             t_smile_start = now
                         elif now - t_smile_start >= SMILE_HOLD_SECS:
@@ -194,16 +326,15 @@ def run(headless: bool):
                             state            = State.IDLE
                     else:
                         t_smile_start = None
-                        if smile < SMILE_THRESHOLD:
+                        if smile < smile_thresh:
                             smile_must_reset = False
 
                 elif state == State.RECORD:
 
-                    # スローブリンク → 録音停止
                     if eye_closed:
                         if t_blink_start is None:
                             t_blink_start = now
-                        elif now - t_blink_start >= BLINK_HOLD_SECS:
+                        elif now - t_blink_start >= blink_hold:
                             fn_release()
                             fn_held = False
                             state = State.COOLDOWN
@@ -216,20 +347,21 @@ def run(headless: bool):
                     if now - t_cooldown_start >= COOLDOWN_SECS:
                         state = State.READY
 
-                # ── デバッグ表示 ───────────────────────────────────────────
-                if not headless:
-                    color = STATE_COLOR[state]
-                    label = STATE_LABEL[state]
-                    cv2.rectangle(frame, (0, 0), (w, 50), color, -1)
-                    cv2.putText(frame, label, (10, 35),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.9, (255, 255, 255), 2)
-                    cv2.putText(frame,
-                                f"JAW:{jaw:.2f}  BLINK:{blink:.2f}(base:{ear_baseline:.2f})  SMILE:{smile:.2f}",
-                                (10, h - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.65,
-                                (200, 200, 200), 1)
+                # 表示キャッシュ更新
+                disp_state  = state
+                disp_jaw    = jaw
+                disp_blink  = blink
+                disp_smile  = smile
+                disp_ear_bl = ear_baseline
 
+            # ── 描画 ──────────────────────────────────────────────────────
             if not headless:
-                cv2.imshow("face_trigger", frame)
+                color = STATE_COLOR[disp_state]
+                cv2.rectangle(frame, (0, 0), (w, 50), color, -1)
+                cv2.putText(frame, STATE_LABEL[disp_state],
+                            (10, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (255, 255, 255), 2)
+                composite = np.vstack([frame, _draw_ctrl(w)])
+                cv2.imshow("face_trigger", composite)
                 if cv2.waitKey(1) & 0xFF == ord('q'):
                     break
 
@@ -245,6 +377,10 @@ def run(headless: bool):
         cap.release()
         if not headless:
             cv2.destroyAllWindows()
+        data = {"jaw": thresholds[0], "blink_delta": thresholds[1],
+                "blink_hold": thresholds[2], "smile": thresholds[3]}
+        SETTINGS_PATH.write_text(json.dumps(data, indent=2))
+        print(f"設定を保存しました: {SETTINGS_PATH}")
         print("終了")
 
 
