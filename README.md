@@ -8,11 +8,19 @@ Control [Aqua Voice](https://withaqua.com) (or any push-to-talk app) with facial
 
 ## How it works / 使い方
 
-| Expression / 表情 | Action / 動作 |
-|---|---|
-| Open mouth / 口を開ける | Start recording / 録音開始（Fn押下） |
-| Slow blink / ゆっくりまばたき | Stop recording / 録音停止（Fn解放） |
-| Smile / 笑顔 | Send / Enter送信 |
+This tool is designed primarily for **[Aqua Voice](https://withaqua.com)**, which uses the **Fn key as a push-to-talk trigger**.  
+AquaFace automates that Fn key press/release via facial expressions, so you never need to touch the keyboard.
+
+このツールは **[Aqua Voice](https://withaqua.com)** での使用を主な想定としています。Aqua Voice は **Fn キーを長押しする間だけ録音する Push-to-Talk 方式**で動作します。  
+AquaFace はその Fn キーの押下・解放を表情で自動化することで、完全なハンズフリー操作を実現します。
+
+| Expression / 表情 | Key sent / 送信キー | Action / 動作 |
+|---|---|---|
+| Open mouth / 口を開ける | `Fn` press / Fn押下 | Start recording in Aqua Voice / 録音開始 |
+| Slow blink / ゆっくりまばたき | `Fn` release / Fn解放 | Stop recording in Aqua Voice / 録音停止 |
+| Smile / 笑顔 | `Enter` | Submit transcription / 文字起こし送信 |
+
+> Other push-to-talk apps that use the Fn key should also work. / Fn キーをトリガーとする他の PTT アプリでも動作します。
 
 ---
 
