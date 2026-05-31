@@ -1,10 +1,8 @@
 # AquaFace
 
-**Hands-free voice input controller using MacBook camera**
-**MacBookカメラを使ったハンズフリー音声入力コントローラー**
+**Hands-free voice input controller using MacBook camera / MacBookカメラを使ったハンズフリー音声入力コントローラー**
 
-Control [Aqua Voice](https://withaqua.com) (or any push-to-talk app) with facial expressions — no hands required.
-[Aqua Voice](https://withaqua.com)などのPush-to-Talkアプリを、表情だけで操作できます。
+Control [Aqua Voice](https://withaqua.com) (or any push-to-talk app) with facial expressions — no hands required. / [Aqua Voice](https://withaqua.com)などのPush-to-Talkアプリを、表情だけで操作できます。
 
 ---
 
