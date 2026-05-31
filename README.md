@@ -6,7 +6,7 @@ Control [Aqua Voice](https://withaqua.com) (or any push-to-talk app) with facial
 
 ## Demo / デモ
 
-<video src="https://github.com/tacosl4ver/aqua-face/releases/download/v1.0/demo.mp4" autoplay loop muted playsinline width="100%"></video>
+![Demo](demo.gif)
 
 ---
 
