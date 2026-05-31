@@ -84,3 +84,11 @@ This project uses [pynput](https://github.com/moses-palmer/pynput), which is lic
 As required by LGPL v3, the pynput source code is available at: https://github.com/moses-palmer/pynput
 
 pynput を LGPL v3 のもとで使用しています。LGPL v3 の要件に従い、pynput のソースコードは上記リンクから入手できます。
+
+---
+
+## Built with / 開発環境
+
+This project was built with the assistance of [Claude Code](https://claude.ai/code) (Anthropic).
+
+このプロジェクトは [Claude Code](https://claude.ai/code)（Anthropic）を使って開発しました。
