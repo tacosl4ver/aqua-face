@@ -4,6 +4,10 @@
 
 Control [Aqua Voice](https://withaqua.com) (or any push-to-talk app) with facial expressions — no hands required. / [Aqua Voice](https://withaqua.com)などのPush-to-Talkアプリを、表情だけで操作できます。
 
+## Demo / デモ
+
+<video src="demo.mp4" autoplay loop muted playsinline width="100%"></video>
+
 ---
 
 ## How it works / 使い方
