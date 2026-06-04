@@ -47,12 +47,26 @@ _FN_KEYCODE = 63
 _FN_FLAG    = Quartz.kCGEventFlagMaskSecondaryFn  # 0x800000
 
 
+def get_frontmost_app_name() -> str:
+    try:
+        windows = Quartz.CGWindowListCopyWindowInfo(
+            Quartz.kCGWindowListOptionOnScreenOnly | Quartz.kCGWindowListExcludeDesktopElements,
+            Quartz.kCGNullWindowID
+        )
+        for w in windows:
+            if w.get("kCGWindowLayer", -1) == 0:
+                return w.get("kCGWindowOwnerName", "")
+        return ""
+    except Exception:
+        return ""
+
+
 def _fn_event(pressed: bool):
     src   = Quartz.CGEventSourceCreate(Quartz.kCGEventSourceStateHIDSystemState)
     event = Quartz.CGEventCreateKeyboardEvent(src, _FN_KEYCODE, pressed)
     Quartz.CGEventSetType(event, Quartz.kCGEventFlagsChanged)
     Quartz.CGEventSetFlags(event, _FN_FLAG if pressed else 0)
-    Quartz.CGEventPost(Quartz.kCGSessionEventTap, event)
+    Quartz.CGEventPost(Quartz.kCGHIDEventTap, event)  # HIDレベルに投稿
 
 
 def fn_press():
@@ -91,7 +105,7 @@ def get_blendshape(blendshapes, name: str) -> float:
     return 0.0
 
 
-def run(headless: bool, stop_event=None):
+def run(headless: bool, stop_event=None, ipc: bool = False):
     if not MODEL_PATH.exists():
         sys.exit(f"モデルファイルが見つかりません: {MODEL_PATH}")
 
@@ -137,13 +151,16 @@ def run(headless: bool, stop_event=None):
 
     # 可変閾値: [jaw, blink_delta, blink_hold, smile]（保存値があれば復元）
     _defaults = [JAW_OPEN_THRESHOLD, BLINK_DELTA, BLINK_HOLD_SECS, SMILE_THRESHOLD]
+    _default_allowed_apps = ["Cursor", "Terminal", "iTerm2", "Code", "Visual Studio Code"]
     try:
         _saved = json.loads(SETTINGS_PATH.read_text())
         thresholds = [float(_saved.get(k, d)) for k, d in
                       zip(["jaw", "blink_delta", "blink_hold", "smile"], _defaults)]
+        allowed_apps = _saved.get("allowed_apps", _default_allowed_apps)
         print(f"設定を読み込みました: {SETTINGS_PATH}")
     except Exception:
         thresholds = _defaults[:]
+        allowed_apps = _default_allowed_apps[:]
 
     # スキップフレームでもパネルを再描画するためにキャッシュ
     disp_state    = State.IDLE
@@ -309,7 +326,8 @@ def run(headless: bool, stop_event=None):
                 if state in (State.IDLE, State.READY):
 
                     if jaw > jaw_thresh:
-                        fn_press()
+                        if ipc: print("FN_PRESS", flush=True)
+                        else:   fn_press()
                         fn_held = True
                         state = State.RECORD
                         t_blink_start = None
@@ -319,8 +337,14 @@ def run(headless: bool, stop_event=None):
                         if t_smile_start is None:
                             t_smile_start = now
                         elif now - t_smile_start >= SMILE_HOLD_SECS:
-                            kb.press(Key.enter)
-                            kb.release(Key.enter)
+                            front_app = get_frontmost_app_name()
+                            if not allowed_apps or not front_app or front_app in allowed_apps:
+                                if ipc: print("ENTER", flush=True)
+                                else:
+                                    kb.press(Key.enter)
+                                    kb.release(Key.enter)
+                            else:
+                                print(f"[Enter スキップ] {front_app!r} は許可リスト外")
                             smile_must_reset = True
                             t_smile_start    = None
                             state            = State.IDLE
@@ -335,7 +359,8 @@ def run(headless: bool, stop_event=None):
                         if t_blink_start is None:
                             t_blink_start = now
                         elif now - t_blink_start >= blink_hold:
-                            fn_release()
+                            if ipc: print("FN_RELEASE", flush=True)
+                            else:   fn_release()
                             fn_held = False
                             state = State.COOLDOWN
                             t_cooldown_start = now
@@ -370,7 +395,8 @@ def run(headless: bool, stop_event=None):
     finally:
         if fn_held:
             try:
-                fn_release()
+                if ipc: print("FN_RELEASE", flush=True)
+                else:   fn_release()
             except Exception:
                 pass
         detector.close()
@@ -378,7 +404,8 @@ def run(headless: bool, stop_event=None):
         if not headless:
             cv2.destroyAllWindows()
         data = {"jaw": thresholds[0], "blink_delta": thresholds[1],
-                "blink_hold": thresholds[2], "smile": thresholds[3]}
+                "blink_hold": thresholds[2], "smile": thresholds[3],
+                "allowed_apps": allowed_apps}
         SETTINGS_PATH.write_text(json.dumps(data, indent=2))
         print(f"設定を保存しました: {SETTINGS_PATH}")
         print("終了")
@@ -388,5 +415,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--headless", action="store_true",
                         help="カメラプレビューなしでバックグラウンド動作")
+    parser.add_argument("--ipc", action="store_true",
+                        help="キー送信をstdout経由で親プロセスに委譲")
     args = parser.parse_args()
-    run(args.headless)
+    run(args.headless, ipc=args.ipc)
